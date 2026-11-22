@@ -1,0 +1,78 @@
+# Every value can be overridden by an environment variable (shown in ${...}).
+spring:
+  application:
+    name: inventory-service
+  threads:
+    virtual:
+      enabled: false          # platform threads keep Tomcat saturation observable in experiments
+  lifecycle:
+    timeout-per-shutdown-phase: ${SHUTDOWN_TIMEOUT:20s}
+
+  # Application traffic: Neon pooled URL if set, otherwise DB_URL (local PostgreSQL).
+  datasource:
+    url: ${DB_POOLED_URL:${DB_URL:jdbc:postgresql://postgres:5432/faultlab}}
+    username: ${DB_USERNAME:faultlab}
+    password: ${DB_PASSWORD:faultlab}
+    hikari:
+      pool-name: inventory-hikari
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:3000}
+      validation-timeout: ${DB_VALIDATION_TIMEOUT_MS:2000}
+      idle-timeout: ${DB_IDLE_TIMEOUT_MS:300000}
+      max-lifetime: ${DB_MAX_LIFETIME_MS:1200000}
+      leak-detection-threshold: ${DB_LEAK_DETECTION_MS:0}
+      data-source-properties:
+        ApplicationName: inventory-service
+        socketTimeout: ${DB_SOCKET_TIMEOUT_S:30}
+
+  # Migrations: Neon direct (non-pooled) URL if set, otherwise DB_URL.
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    url: ${DB_DIRECT_URL:${DB_URL:jdbc:postgresql://postgres:5432/faultlab}}
+    user: ${DB_USERNAME:faultlab}
+    password: ${DB_PASSWORD:faultlab}
+    schemas: inventory_service
+    default-schema: inventory_service
+    create-schemas: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8081}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: ${TOMCAT_MAX_THREADS:200}
+    accept-count: ${TOMCAT_ACCEPT_COUNT:100}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        faultlab.db.operation: true
+        hikaricp.connections.acquire: true
+        hikaricp.connections.usage: true
+      maximum-expected-value:
+        http.server.requests: 30s
+        faultlab.db.operation: 30s
+
+faultlab:
+  db:
+    artificial-delay: ${DB_ARTIFICIAL_DELAY:0ms}
+  failure:
+    mode: ${FAILURE_MODE:NORMAL}
+    slow-latency-ms: ${FAILURE_SLOW_LATENCY_MS:5000}
+    failure-rate: ${FAILURE_RATE:0.3}
+    base-latency-ms: ${FAILURE_BASE_LATENCY_MS:0}

@@ -1,0 +1,26 @@
+{
+  "index_patterns": ["faultlab-logs-*"],
+  "template": {
+    "settings": { "number_of_shards": 1, "number_of_replicas": 0 },
+    "mappings": {
+      "properties": {
+        "@timestamp":     { "type": "date" },
+        "log.level":      { "type": "keyword" },
+        "service.name":   { "type": "keyword" },
+        "trace_id":       { "type": "keyword" },
+        "span_id":        { "type": "keyword" },
+        "correlation_id": { "type": "keyword" },
+        "retry_attempt":  { "type": "keyword" },
+        "http_status":    { "type": "keyword" },
+        "http_method":    { "type": "keyword" },
+        "http_path":      { "type": "keyword" },
+        "logger":         { "type": "keyword" },
+        "thread":         { "type": "keyword" },
+        "message":        { "type": "text" },
+        "error.type":     { "type": "keyword" },
+        "error.message":  { "type": "text" },
+        "error.stack_trace": { "type": "text", "index": false }
+      }
+    }
+  }
+}

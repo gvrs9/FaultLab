@@ -1,0 +1,13 @@
+# Profile for running from an IDE / host JVM against containers exposed on localhost.
+# Activate with SPRING_PROFILES_ACTIVE=local. Environment variables still win.
+spring:
+  datasource:
+    url: ${DB_POOLED_URL:${DB_URL:jdbc:postgresql://localhost:5432/faultlab}}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:5}
+  flyway:
+    url: ${DB_DIRECT_URL:${DB_URL:jdbc:postgresql://localhost:5432/faultlab}}
+
+faultlab:
+  failure:
+    slow-latency-ms: ${FAILURE_SLOW_LATENCY_MS:5000}

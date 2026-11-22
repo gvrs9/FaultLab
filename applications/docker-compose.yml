@@ -1,0 +1,179 @@
+# Application stack: order-service, inventory-service and an optional local PostgreSQL.
+#   Local DB : docker compose --env-file ../.env --profile local-db up -d --build
+#   Neon     : docker compose --env-file ../.env up -d --build      (DB_* variables point at Neon)
+name: faultlab-apps
+
+x-app-common: &app-common
+  restart: unless-stopped
+  stop_grace_period: 30s
+  networks: [faultlab-net]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "3" }
+
+x-app-env: &app-env
+  # Database (local default = Docker DNS name "postgres"; Neon = set DB_POOLED_URL + DB_DIRECT_URL)
+  DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/faultlab}
+  DB_POOLED_URL: ${DB_POOLED_URL:-${DB_URL:-jdbc:postgresql://postgres:5432/faultlab}}
+  DB_DIRECT_URL: ${DB_DIRECT_URL:-${DB_URL:-jdbc:postgresql://postgres:5432/faultlab}}
+  DB_USERNAME: ${DB_USERNAME:-faultlab}
+  DB_PASSWORD: ${DB_PASSWORD:-faultlab}
+  FLYWAY_ENABLED: ${FLYWAY_ENABLED:-true}
+  DB_VALIDATION_TIMEOUT_MS: ${DB_VALIDATION_TIMEOUT_MS:-2000}
+  DB_IDLE_TIMEOUT_MS: ${DB_IDLE_TIMEOUT_MS:-300000}
+  DB_MAX_LIFETIME_MS: ${DB_MAX_LIFETIME_MS:-1200000}
+  DB_LEAK_DETECTION_MS: ${DB_LEAK_DETECTION_MS:-0}
+  DB_SOCKET_TIMEOUT_S: ${DB_SOCKET_TIMEOUT_S:-30}
+  TOMCAT_ACCEPT_COUNT: ${TOMCAT_ACCEPT_COUNT:-100}
+  SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-20s}
+  # Telemetry
+  OTEL_JAVAAGENT_ENABLED: ${OTEL_JAVAAGENT_ENABLED:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: none            # metrics: Micrometer -> Prometheus
+  OTEL_LOGS_EXPORTER: none               # logs: Log4j2 -> Logstash -> Elasticsearch
+  OTEL_PROPAGATORS: tracecontext,baggage
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+  OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_REQUEST_HEADERS: X-Correlation-Id
+  OTEL_INSTRUMENTATION_HTTP_CLIENT_CAPTURE_REQUEST_HEADERS: X-Correlation-Id
+  # Logging
+  LOGSTASH_ENABLED: ${LOGSTASH_ENABLED:-false}
+  LOGSTASH_HOST: ${LOGSTASH_HOST:-logstash}
+  LOGSTASH_PORT: ${LOGSTASH_PORT:-5000}
+  FAULTLAB_LOG_LEVEL: ${FAULTLAB_LOG_LEVEL:-INFO}
+  ROOT_LOG_LEVEL: ${ROOT_LOG_LEVEL:-INFO}
+  JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError}
+
+services:
+  postgres:
+    profiles: ["local-db"]
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks: [faultlab-net]
+    environment:
+      POSTGRES_DB: faultlab
+      POSTGRES_USER: ${DB_USERNAME:-faultlab}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-faultlab}
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-100}",
+              "-c", "log_min_duration_statement=${POSTGRES_LOG_SLOW_MS:-1000}"]
+    ports: ["${POSTGRES_HOST_PORT:-5432}:5432"]
+    volumes:
+      - faultlab-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d faultlab"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  inventory-service:
+    <<: *app-common
+    build:
+      context: ..
+      dockerfile: applications/inventory-service/Dockerfile
+    image: faultlab/inventory-service:latest
+    environment:
+      <<: *app-env
+      SERVER_PORT: "8081"
+      OTEL_SERVICE_NAME: inventory-service
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=faultlab,deployment.environment=${DEPLOY_ENV:-local}
+      DB_POOL_MAX_SIZE: ${INVENTORY_DB_POOL_MAX_SIZE:-10}
+      DB_POOL_MIN_IDLE: ${INVENTORY_DB_POOL_MIN_IDLE:-2}
+      DB_CONNECTION_TIMEOUT_MS: ${INVENTORY_DB_CONNECTION_TIMEOUT_MS:-3000}
+      DB_ARTIFICIAL_DELAY: ${INVENTORY_DB_ARTIFICIAL_DELAY:-0ms}
+      TOMCAT_MAX_THREADS: ${INVENTORY_TOMCAT_MAX_THREADS:-200}
+      FAILURE_MODE: ${FAILURE_MODE:-NORMAL}
+      FAILURE_SLOW_LATENCY_MS: ${FAILURE_SLOW_LATENCY_MS:-5000}
+      FAILURE_RATE: ${FAILURE_RATE:-0.3}
+      FAILURE_BASE_LATENCY_MS: ${FAILURE_BASE_LATENCY_MS:-0}
+    ports: ["${INVENTORY_HOST_PORT:-8081}:8081"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false            # absent when using Neon
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      start_period: 90s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "${INVENTORY_CPUS:-1.0}", memory: "${INVENTORY_MEMORY:-768M}" }
+
+  order-service:
+    <<: *app-common
+    build:
+      context: ..
+      dockerfile: applications/order-service/Dockerfile
+    image: faultlab/order-service:latest
+    environment:
+      <<: *app-env
+      SERVER_PORT: "8080"
+      OTEL_SERVICE_NAME: order-service
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=faultlab,deployment.environment=${DEPLOY_ENV:-local}
+      INVENTORY_BASE_URL: ${INVENTORY_BASE_URL:-http://inventory-service:8081}
+      HTTP_CONNECT_TIMEOUT: ${HTTP_CONNECT_TIMEOUT:-500ms}
+      HTTP_RESPONSE_TIMEOUT: ${HTTP_RESPONSE_TIMEOUT:-2s}
+      DB_POOL_MAX_SIZE: ${ORDER_DB_POOL_MAX_SIZE:-10}
+      DB_POOL_MIN_IDLE: ${ORDER_DB_POOL_MIN_IDLE:-2}
+      DB_CONNECTION_TIMEOUT_MS: ${ORDER_DB_CONNECTION_TIMEOUT_MS:-3000}
+      DB_ARTIFICIAL_DELAY: ${ORDER_DB_ARTIFICIAL_DELAY:-0ms}
+      TOMCAT_MAX_THREADS: ${ORDER_TOMCAT_MAX_THREADS:-200}
+      RETRY_ENABLED: ${RETRY_ENABLED:-true}
+      RETRY_MODE: ${RETRY_MODE:-RESILIENCE4J}
+      RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-3}
+      RETRY_STATUS_CODES: ${RETRY_STATUS_CODES:-502,503,504}
+      RETRY_EXCEPTIONS: ${RETRY_EXCEPTIONS:-java.net.ConnectException,java.net.http.HttpTimeoutException,java.net.SocketTimeoutException}
+      RETRY_BACKOFF_STRATEGY: ${RETRY_BACKOFF_STRATEGY:-EXPONENTIAL}
+      RETRY_INITIAL_INTERVAL: ${RETRY_INITIAL_INTERVAL:-100ms}
+      RETRY_MULTIPLIER: ${RETRY_MULTIPLIER:-2.0}
+      RETRY_MAX_INTERVAL: ${RETRY_MAX_INTERVAL:-2s}
+      RETRY_JITTER: ${RETRY_JITTER:-FULL}
+      CB_ENABLED: ${CB_ENABLED:-true}
+      CB_FAILURE_RATE_THRESHOLD: ${CB_FAILURE_RATE_THRESHOLD:-50}
+      CB_SLOW_CALL_RATE_THRESHOLD: ${CB_SLOW_CALL_RATE_THRESHOLD:-80}
+      CB_SLOW_CALL_DURATION: ${CB_SLOW_CALL_DURATION:-1500ms}
+      CB_SLIDING_WINDOW_TYPE: ${CB_SLIDING_WINDOW_TYPE:-COUNT_BASED}
+      CB_SLIDING_WINDOW_SIZE: ${CB_SLIDING_WINDOW_SIZE:-20}
+      CB_MINIMUM_CALLS: ${CB_MINIMUM_CALLS:-10}
+      CB_WAIT_OPEN: ${CB_WAIT_OPEN:-10s}
+      CB_HALF_OPEN_CALLS: ${CB_HALF_OPEN_CALLS:-5}
+      CB_MAX_WAIT_HALF_OPEN: ${CB_MAX_WAIT_HALF_OPEN:-0s}
+      BULKHEAD_ENABLED: ${BULKHEAD_ENABLED:-true}
+      BULKHEAD_MAX_CONCURRENT: ${BULKHEAD_MAX_CONCURRENT:-50}
+      BULKHEAD_MAX_WAIT: ${BULKHEAD_MAX_WAIT:-0ms}
+      RECONCILER_ENABLED: ${RECONCILER_ENABLED:-true}
+      RECONCILER_INTERVAL_MS: ${RECONCILER_INTERVAL_MS:-30000}
+      RECONCILER_MIN_AGE: ${RECONCILER_MIN_AGE:-30s}
+      RECONCILER_BATCH_SIZE: ${RECONCILER_BATCH_SIZE:-50}
+    ports: ["${ORDER_HOST_PORT:-8080}:8080"]
+    depends_on:
+      inventory-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      start_period: 90s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "${ORDER_CPUS:-1.0}", memory: "${ORDER_MEMORY:-768M}" }
+
+networks:
+  faultlab-net:
+    external: true
+    name: faultlab-net
+
+volumes:
+  faultlab-pgdata:
+    name: faultlab-pgdata

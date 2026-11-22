@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Structured JSON logging, never blocking request threads:
+  - Console: JSON to stdout via a non-blocking async appender (events are dropped, not queued, when full).
+  - Logstash: optional TCP JSON appender, enabled with -Dlogstash.enabled=true (set from LOGSTASH_ENABLED
+    by the container entrypoint). If Logstash is down, the socket appender reconnects in the background.
+  trace_id / span_id are put into the ThreadContext by the OpenTelemetry Java agent.
+-->
+<Configuration status="WARN" shutdownHook="disable">
+  <Properties>
+    <Property name="SERVICE_NAME">${spring:spring.application.name:-faultlab}</Property>
+    <Property name="LOGSTASH_HOST">${env:LOGSTASH_HOST:-logstash}</Property>
+    <Property name="LOGSTASH_PORT">${env:LOGSTASH_PORT:-5000}</Property>
+  </Properties>
+  <Appenders>
+    <Console name="JsonConsole" target="SYSTEM_OUT">
+      <JsonTemplateLayout eventTemplateUri="classpath:faultlab-log-template.json">
+        <EventTemplateAdditionalField key="service.name" value="${SERVICE_NAME}"/>
+      </JsonTemplateLayout>
+    </Console>
+    <Select>
+      <SystemPropertyArbiter propertyName="logstash.enabled" propertyValue="true">
+        <Socket name="Logstash" host="${LOGSTASH_HOST}" port="${LOGSTASH_PORT}" protocol="TCP"
+                reconnectionDelayMillis="5000" immediateFail="false" immediateFlush="false"
+                connectTimeoutMillis="2000" ignoreExceptions="true">
+          <JsonTemplateLayout eventTemplateUri="classpath:faultlab-log-template.json">
+            <EventTemplateAdditionalField key="service.name" value="${SERVICE_NAME}"/>
+          </JsonTemplateLayout>
+        </Socket>
+      </SystemPropertyArbiter>
+      <DefaultArbiter>
+        <Null name="Logstash"/>
+      </DefaultArbiter>
+    </Select>
+    <Async name="AsyncConsole" blocking="false" bufferSize="8192">
+      <AppenderRef ref="JsonConsole"/>
+    </Async>
+    <Async name="AsyncLogstash" blocking="false" bufferSize="8192">
+      <AppenderRef ref="Logstash"/>
+    </Async>
+  </Appenders>
+  <Loggers>
+    <Logger name="com.faultlab" level="${env:FAULTLAB_LOG_LEVEL:-INFO}"/>
+    <Logger name="com.zaxxer.hikari" level="INFO"/>
+    <Logger name="org.flywaydb" level="INFO"/>
+    <Root level="${env:ROOT_LOG_LEVEL:-INFO}">
+      <AppenderRef ref="AsyncConsole"/>
+      <AppenderRef ref="AsyncLogstash"/>
+    </Root>
+  </Loggers>
+</Configuration>

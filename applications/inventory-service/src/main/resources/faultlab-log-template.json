@@ -1,0 +1,17 @@
+{
+  "@timestamp": { "$resolver": "timestamp", "pattern": { "format": "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "timeZone": "UTC" } },
+  "log.level": { "$resolver": "level", "field": "name" },
+  "message": { "$resolver": "message", "stringified": true },
+  "logger": { "$resolver": "logger", "field": "name" },
+  "thread": { "$resolver": "thread", "field": "name" },
+  "trace_id": { "$resolver": "mdc", "key": "trace_id" },
+  "span_id": { "$resolver": "mdc", "key": "span_id" },
+  "correlation_id": { "$resolver": "mdc", "key": "correlation_id" },
+  "retry_attempt": { "$resolver": "mdc", "key": "retry_attempt" },
+  "http_status": { "$resolver": "mdc", "key": "http_status" },
+  "http_method": { "$resolver": "mdc", "key": "http_method" },
+  "http_path": { "$resolver": "mdc", "key": "http_path" },
+  "error.type": { "$resolver": "exception", "field": "className" },
+  "error.message": { "$resolver": "exception", "field": "message" },
+  "error.stack_trace": { "$resolver": "exception", "field": "stackTrace", "stackTrace": { "stringified": true } }
+}
