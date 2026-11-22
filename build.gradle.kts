@@ -13,10 +13,9 @@ allprojects {
 subprojects {
     apply(plugin = "java")
 
-    // No toolchain pin: any JDK >= 21 (including 25) builds the project,
-    // while --release 21 guarantees Java 21 language level and APIs only.
+    // No toolchain or --release pin: use the installed JDK.
+    // Keep application source compatible with Java 21 by project convention.
     tasks.withType<JavaCompile>().configureEach {
-        options.release.set(21)
         options.encoding = "UTF-8"
         options.compilerArgs.addAll(listOf("-parameters", "-Xlint:all,-processing,-serial"))
     }
